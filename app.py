@@ -19,10 +19,10 @@ st.title("📈 Dashboard Comercial para Equipo de Ventas")
 st.markdown("Análisis de comportamiento de compras y generación de prospectos para médicos.")
 
 # --- GENERACIÓN DE DATOS SIMULADOS ---
-@st.cache_data
+# Se elimina @st.cache_data para usar st.session_state para un control explícito
 def generar_datos(n_medicos=200, n_compras=2000):
     """Genera un DataFrame simulado de médicos y sus compras."""
-    # Se elimina np.random.seed(42) para que los datos sean diferentes cada vez que se llama
+    # Sin semilla aleatoria para asegurar que los datos sean diferentes cada vez.
     
     # Datos de Médicos
     especialidades = ['Cardiología', 'Dermatología', 'Pediatría', 'Oncología', 'General']
@@ -58,7 +58,6 @@ def crear_features(df):
         Monetario=('Monto_Compra', 'sum')
     ).reset_index()
     
-    # Crear un target sintético para el modelo (ej: compró en los últimos 90 días)
     df_ultima_compra = df.groupby('ID_Medico')['Fecha_Compra'].max().reset_index()
     df_ultima_compra['Target'] = (hoy - df_ultima_compra['Fecha_Compra']).dt.days < 90
     
@@ -71,25 +70,26 @@ def entrenar_modelo(features_df):
     X = features_df[['Recencia', 'Frecuencia', 'Monetario']]
     y = features_df['Target']
     
-    # Dividir datos
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.25, random_state=42)
     
-    # Entrenar modelo
     model = RandomForestClassifier(n_estimators=100, random_state=42, class_weight='balanced')
     model.fit(X_train, y_train)
     
     return model
 
-# --- BARRA LATERAL ---
+# --- BARRA LATERAL Y MANEJO DE ESTADO ---
 st.sidebar.header("Controles del Dashboard")
 
-# Botón para refrescar los datos de origen
+# Botón para refrescar los datos de origen, usando session_state
 if st.sidebar.button("🔄 Simular Nuevos Datos de Origen"):
-    st.cache_data.clear()
+    st.session_state.df_original = generar_datos()
     st.sidebar.success("Nuevos datos generados. ¡Vuelve a generar prospectos!")
 
-# Cargar datos (se recargará si se limpia la caché)
-df_original = generar_datos()
+# Inicializar el dataframe en el estado de la sesión si no existe
+if 'df_original' not in st.session_state:
+    st.session_state.df_original = generar_datos()
+
+df_original = st.session_state.df_original
 
 # Filtros del dashboard
 st.sidebar.header("Filtros de Visualización")
@@ -116,13 +116,11 @@ st.subheader("Análisis de Comportamiento de Compras")
 col1, col2 = st.columns(2)
 
 with col1:
-    # Ventas a lo largo del tiempo
     ventas_por_mes = df_filtrado.set_index('Fecha_Compra').groupby(pd.Grouper(freq='ME'))['Monto_Compra'].sum().reset_index()
     fig_line = px.line(ventas_por_mes, x='Fecha_Compra', y='Monto_Compra', title='Evolución de Ventas Mensuales', markers=True)
     st.plotly_chart(fig_line, use_container_width=True)
 
 with col2:
-    # Top productos por monto
     top_productos = df_filtrado.groupby('Producto')['Monto_Compra'].sum().nlargest(5).reset_index()
     fig_bar = px.bar(top_productos, x='Producto', y='Monto_Compra', title='Top 5 Productos por Monto de Venta', color='Producto')
     st.plotly_chart(fig_bar, use_container_width=True)
@@ -132,7 +130,6 @@ st.markdown("---")
 # --- SECCIÓN DE PREDICCIÓN Y GENERACIÓN DE PROSPECTOS ---
 st.subheader("🤖 Generador de Prospectos con IA")
 
-# Controles para la generación de prospectos
 st.sidebar.header("Generador de Prospectos")
 dias_sin_compra = st.sidebar.slider(
     "Médicos que no han comprado en los últimos (días):",
@@ -145,31 +142,26 @@ comercial_seleccionado = st.sidebar.selectbox(
 
 if st.sidebar.button("✨ Generar Prospectos"):
     with st.spinner('Reentrenando modelo y generando prospectos...'):
-        # 1. Recrear features y reentrenar el modelo CADA VEZ que se presiona el botón
         df_features = crear_features(df_original)
         modelo = entrenar_modelo(df_features)
 
-        # 2. Identificar médicos inactivos
         medicos_activos_recientemente = df_original[df_original['Fecha_Compra'] >= (datetime.now() - timedelta(days=dias_sin_compra))]['ID_Medico'].unique()
         prospectos_df = df_features[~df_features['ID_Medico'].isin(medicos_activos_recientemente)]
 
         if prospectos_df.empty:
             st.warning(f"No se encontraron médicos que no hayan comprado en los últimos {dias_sin_compra} días.")
         else:
-            # 3. Predecir probabilidad de compra con el nuevo modelo
             X_prospectos = prospectos_df[['Recencia', 'Frecuencia', 'Monetario']]
             probabilidades = modelo.predict_proba(X_prospectos)[:, 1]
             prospectos_df['Probabilidad_Compra'] = probabilidades
 
-            # 4. Asignar a comerciales
             prospectos_df = prospectos_df.sort_values(by='Probabilidad_Compra', ascending=False)
             
             if comercial_seleccionado == 'Camila':
                 prospectos_finales = prospectos_df[prospectos_df['ID_Medico'] % 2 == 0].head(3)
-            else: # Andrea
+            else:
                 prospectos_finales = prospectos_df[prospectos_df['ID_Medico'] % 2 != 0].head(3)
             
-            # 5. Mostrar resultados
             st.success(f"Top 3 Prospectos asignados a **{comercial_seleccionado}**:")
             
             if prospectos_finales.empty:
@@ -191,8 +183,6 @@ if st.sidebar.button("✨ Generar Prospectos"):
                     """, unsafe_allow_html=True)
 else:
     st.info("Ajusta los filtros en la barra lateral y haz clic en 'Generar Prospectos' para ver las recomendaciones.")
-
-
 
 
 
