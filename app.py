@@ -85,15 +85,20 @@ df_original = generar_datos()
 
 # --- BARRA LATERAL DE FILTROS ---
 st.sidebar.header("Filtros del Dashboard")
-especialidad_seleccionada = st.sidebar.multoselect(
+
+# Convertir a lista para asegurar compatibilidad con Streamlit
+especialidad_options = df_original['Especialidad'].unique().tolist()
+ciudad_options = df_original['Ciudad'].unique().tolist()
+
+especialidad_seleccionada = st.sidebar.multiselect(
     "Filtrar por Especialidad:",
-    options=df_original['Especialidad'].unique(),
-    default=df_original['Especialidad'].unique()
+    options=especialidad_options,
+    default=especialidad_options
 )
-ciudad_seleccionada = st.sidebar.multoselect(
+ciudad_seleccionada = st.sidebar.multiselect(
     "Filtrar por Ciudad:",
-    options=df_original['Ciudad'].unique(),
-    default=df_original['Ciudad'].unique()
+    options=ciudad_options,
+    default=ciudad_options
 )
 df_filtrado = df_original[
     (df_original['Especialidad'].isin(especialidad_seleccionada)) &
@@ -180,5 +185,6 @@ if st.sidebar.button("✨ Generar Prospectos"):
                     """, unsafe_allow_html=True)
 else:
     st.info("Ajusta los filtros en la barra lateral y haz clic en 'Generar Prospectos' para ver las recomendaciones.")
+
 
 
