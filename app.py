@@ -22,7 +22,7 @@ st.markdown("Análisis de comportamiento de compras y generación de prospectos 
 @st.cache_data
 def generar_datos(n_medicos=200, n_compras=2000):
     """Genera un DataFrame simulado de médicos y sus compras."""
-    np.random.seed(42)
+    # Se elimina np.random.seed(42) para que los datos sean diferentes cada vez que se llama
     
     # Datos de Médicos
     especialidades = ['Cardiología', 'Dermatología', 'Pediatría', 'Oncología', 'General']
@@ -80,13 +80,19 @@ def entrenar_modelo(features_df):
     
     return model
 
-# Cargar datos (solo se hace una vez gracias al caché)
+# --- BARRA LATERAL ---
+st.sidebar.header("Controles del Dashboard")
+
+# Botón para refrescar los datos de origen
+if st.sidebar.button("🔄 Simular Nuevos Datos de Origen"):
+    st.cache_data.clear()
+    st.sidebar.success("Nuevos datos generados. ¡Vuelve a generar prospectos!")
+
+# Cargar datos (se recargará si se limpia la caché)
 df_original = generar_datos()
 
-# --- BARRA LATERAL DE FILTROS ---
-st.sidebar.header("Filtros del Dashboard")
-
-# Convertir a lista para asegurar compatibilidad con Streamlit
+# Filtros del dashboard
+st.sidebar.header("Filtros de Visualización")
 especialidad_options = df_original['Especialidad'].unique().tolist()
 ciudad_options = df_original['Ciudad'].unique().tolist()
 
@@ -185,6 +191,7 @@ if st.sidebar.button("✨ Generar Prospectos"):
                     """, unsafe_allow_html=True)
 else:
     st.info("Ajusta los filtros en la barra lateral y haz clic en 'Generar Prospectos' para ver las recomendaciones.")
+
 
 
 
