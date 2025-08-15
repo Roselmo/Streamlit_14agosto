@@ -2,145 +2,182 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.express as px
+from datetime import datetime, timedelta
+from sklearn.model_selection import train_test_split
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import accuracy_score
 
 # --- CONFIGURACIÓN DE LA PÁGINA ---
 st.set_page_config(
-    page_title="Dashboard de Salud Interactivo",
-    page_icon="🩺",
+    page_title="Dashboard Comercial de Salud",
+    page_icon="📈",
     layout="wide"
 )
 
 # --- TÍTULO PRINCIPAL ---
-st.title("🩺 Dashboard Interactivo de Datos de Salud")
-st.markdown("Utiliza los filtros en la barra lateral para explorar los datos de los pacientes.")
+st.title("📈 Dashboard Comercial para Equipo de Ventas")
+st.markdown("Análisis de comportamiento de compras y generación de prospectos para médicos.")
 
-# --- GENERACIÓN DE DATOS ---
+# --- GENERACIÓN DE DATOS SIMULADOS ---
 @st.cache_data
-def generar_datos(n_records=1000):
-    """Genera un DataFrame con datos de salud aleatorios."""
-    np.random.seed(42) # Semilla para reproducibilidad
-    ciudades = ['Bogotá', 'Medellín', 'Cali', 'Barranquilla', 'Cartagena']
-    generos = ['Masculino', 'Femenino']
+def generar_datos(n_medicos=200, n_compras=2000):
+    """Genera un DataFrame simulado de médicos y sus compras."""
+    np.random.seed(42)
     
-    data = {
-        'Edad': np.random.randint(18, 85, size=n_records),
-        'Genero': np.random.choice(generos, size=n_records),
-        'Ciudad': np.random.choice(ciudades, size=n_records),
-        'Presion_Sistolica': np.random.randint(90, 180, size=n_records),
-        'Presion_Diastolica': np.random.randint(60, 110, size=n_records),
-        'Colesterol_Total': np.random.randint(150, 300, size=n_records),
-        'Glucosa': np.random.randint(70, 200, size=n_records),
-        'IMC': np.random.uniform(18.5, 40, size=n_records).round(1),
-        'Fumador': np.random.choice([True, False], size=n_records, p=[0.25, 0.75]),
-        'Actividad_Fisica_Horas': np.random.randint(0, 15, size=n_records)
-    }
-    df = pd.DataFrame(data)
-    return df
+    # Datos de Médicos
+    especialidades = ['Cardiología', 'Dermatología', 'Pediatría', 'Oncología', 'General']
+    ciudades = ['Bogotá', 'Medellín', 'Cali', 'Barranquilla']
+    medicos_df = pd.DataFrame({
+        'ID_Medico': range(1, n_medicos + 1),
+        'Nombre_Medico': [f'Dr. Apellido{i}' for i in range(1, n_medicos + 1)],
+        'Especialidad': np.random.choice(especialidades, n_medicos),
+        'Ciudad': np.random.choice(ciudades, n_medicos)
+    })
 
+    # Datos de Compras
+    productos = ['Producto A', 'Producto B', 'Producto C', 'Producto D', 'Producto E']
+    fechas_compra = [datetime.now() - timedelta(days=np.random.randint(1, 730)) for _ in range(n_compras)]
+    compras_df = pd.DataFrame({
+        'ID_Medico': np.random.randint(1, n_medicos + 1, n_compras),
+        'Fecha_Compra': fechas_compra,
+        'Producto': np.random.choice(productos, n_compras),
+        'Monto_Compra': np.random.uniform(100, 1500, n_compras).round(2)
+    })
+
+    # Unir los dataframes
+    df_completo = pd.merge(compras_df, medicos_df, on='ID_Medico')
+    return df_completo.sort_values(by='Fecha_Compra', ascending=False)
+
+# --- FEATURE ENGINEERING PARA EL MODELO ---
+def crear_features(df):
+    """Crea características de Recencia, Frecuencia y Monetario (RFM)."""
+    hoy = datetime.now()
+    features_df = df.groupby('ID_Medico').agg(
+        Recencia=('Fecha_Compra', lambda date: (hoy - date.max()).days),
+        Frecuencia=('ID_Medico', 'count'),
+        Monetario=('Monto_Compra', 'sum')
+    ).reset_index()
+    
+    # Crear un target sintético para el modelo (ej: compró en los últimos 90 días)
+    df_ultima_compra = df.groupby('ID_Medico')['Fecha_Compra'].max().reset_index()
+    df_ultima_compra['Target'] = (hoy - df_ultima_compra['Fecha_Compra']).dt.days < 90
+    
+    features_df = pd.merge(features_df, df_ultima_compra[['ID_Medico', 'Target']], on='ID_Medico')
+    return features_df
+
+# --- ENTRENAMIENTO DEL MODELO PREDICTIVO ---
+@st.cache_resource
+def entrenar_modelo(features_df):
+    """Entrena un modelo de clasificación para predecir la probabilidad de compra."""
+    X = features_df[['Recencia', 'Frecuencia', 'Monetario']]
+    y = features_df['Target']
+    
+    # Dividir datos
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.25, random_state=42)
+    
+    # Entrenar modelo
+    model = RandomForestClassifier(n_estimators=100, random_state=42, class_weight='balanced')
+    model.fit(X_train, y_train)
+    
+    return model
+
+# Cargar y procesar datos
 df_original = generar_datos()
-df = df_original.copy()
+df_features = crear_features(df_original)
+modelo = entrenar_modelo(df_features)
 
 # --- BARRA LATERAL DE FILTROS ---
 st.sidebar.header("Filtros del Dashboard")
-
-# Filtro por Ciudad
-ciudades_seleccionadas = st.sidebar.multiselect(
-    "Selecciona la Ciudad:",
-    options=df['Ciudad'].unique(),
-    default=df['Ciudad'].unique()
+especialidad_seleccionada = st.sidebar.multiselect(
+    "Filtrar por Especialidad:",
+    options=df_original['Especialidad'].unique(),
+    default=df_original['Especialidad'].unique()
 )
-
-# Filtro por Rango de Edad
-rango_edad = st.sidebar.slider(
-    "Selecciona el Rango de Edad:",
-    min_value=int(df['Edad'].min()),
-    max_value=int(df['Edad'].max()),
-    value=(int(df['Edad'].min()), int(df['Edad'].max()))
+ciudad_seleccionada = st.sidebar.multiselect(
+    "Filtrar por Ciudad:",
+    options=df_original['Ciudad'].unique(),
+    default=df_original['Ciudad'].unique()
 )
-
-# Filtro por Género
-genero_seleccionado = st.sidebar.multiselect(
-    "Selecciona el Género:",
-    options=df['Genero'].unique(),
-    default=df['Genero'].unique()
-)
-
-# Filtro por Fumador (con checkbox)
-solo_fumadores = st.sidebar.checkbox("Mostrar solo fumadores")
-
-# --- APLICACIÓN DE FILTROS ---
-df_filtrado = df[
-    (df['Ciudad'].isin(ciudades_seleccionadas)) &
-    (df['Edad'].between(rango_edad[0], rango_edad[1])) &
-    (df['Genero'].isin(genero_seleccionado))
+df_filtrado = df_original[
+    (df_original['Especialidad'].isin(especialidad_seleccionada)) &
+    (df_original['Ciudad'].isin(ciudad_seleccionada))
 ]
 
-if solo_fumadores:
-    df_filtrado = df_filtrado[df_filtrado['Fumador'] == True]
-
-
-# --- CONTENIDO PRINCIPAL DEL DASHBOARD ---
-
-# Métricas Clave (KPIs)
-st.subheader("Métricas Clave")
-kpi1, kpi2, kpi3, kpi4 = st.columns(4)
-
-with kpi1:
-    st.metric(label="Total Pacientes", value=f"{df_filtrado.shape[0]:,}")
-
-with kpi2:
-    st.metric(label="Edad Promedio", value=f"{df_filtrado['Edad'].mean():.1f} años")
-
-with kpi3:
-    st.metric(label="Colesterol Promedio", value=f"{df_filtrado['Colesterol_Total'].mean():.0f} mg/dL")
-
-with kpi4:
-    st.metric(label="IMC Promedio", value=f"{df_filtrado['IMC'].mean():.1f}")
-
-st.markdown("---")
-
-# --- VISUALIZACIONES DINÁMICAS ---
-st.subheader("Visualizaciones Interactivas")
-
-# Dividir el layout en dos columnas para los gráficos
+# --- DASHBOARD DE ANÁLISIS COMERCIAL ---
+st.subheader("Análisis de Comportamiento de Compras")
 col1, col2 = st.columns(2)
 
 with col1:
-    # Gráfico de Distribución (Histograma)
-    st.markdown("#### Distribución de una Variable")
-    numeric_cols = df_filtrado.select_dtypes(include=np.number).columns.tolist()
-    var_dist = st.selectbox("Selecciona una variable numérica:", options=numeric_cols, index=numeric_cols.index('IMC'))
-    
-    fig_hist = px.histogram(
-        df_filtrado,
-        x=var_dist,
-        color='Genero',
-        marginal="box", # Añade un boxplot en el margen
-        title=f'Distribución de {var_dist}',
-        template='plotly_white'
-    )
-    st.plotly_chart(fig_hist, use_container_width=True)
+    # Ventas a lo largo del tiempo
+    ventas_por_mes = df_filtrado.set_index('Fecha_Compra').groupby(pd.Grouper(freq='ME'))['Monto_Compra'].sum().reset_index()
+    fig_line = px.line(ventas_por_mes, x='Fecha_Compra', y='Monto_Compra', title='Evolución de Ventas Mensuales', markers=True)
+    st.plotly_chart(fig_line, use_container_width=True)
 
 with col2:
-    # Gráfico de Correlación (Scatter Plot)
-    st.markdown("#### Relación entre dos Variables")
-    x_axis = st.selectbox("Variable para el Eje X:", options=numeric_cols, index=numeric_cols.index('Edad'))
-    y_axis = st.selectbox("Variable para el Eje Y:", options=numeric_cols, index=numeric_cols.index('Presion_Sistolica'))
-    
-    fig_scatter = px.scatter(
-        df_filtrado,
-        x=x_axis,
-        y=y_axis,
-        color='Fumador',
-        title=f'Relación entre {x_axis} y {y_axis}',
-        hover_name='Ciudad',
-        template='plotly_white'
-    )
-    st.plotly_chart(fig_scatter, use_container_width=True)
+    # Top productos por monto
+    top_productos = df_filtrado.groupby('Producto')['Monto_Compra'].sum().nlargest(5).reset_index()
+    fig_bar = px.bar(top_productos, x='Producto', y='Monto_Compra', title='Top 5 Productos por Monto de Venta', color='Producto')
+    st.plotly_chart(fig_bar, use_container_width=True)
 
 st.markdown("---")
 
-# --- VISTA DE DATOS FILTRADOS ---
-st.subheader("Datos Filtrados")
-st.write(f"Mostrando {df_filtrado.shape[0]} de {df_original.shape[0]} registros.")
-st.dataframe(df_filtrado)
+# --- SECCIÓN DE PREDICCIÓN Y GENERACIÓN DE PROSPECTOS ---
+st.subheader("🤖 Generador de Prospectos con IA")
+
+# Controles para la generación de prospectos
+st.sidebar.header("Generador de Prospectos")
+dias_sin_compra = st.sidebar.slider(
+    "Médicos que no han comprado en los últimos (días):",
+    min_value=30, max_value=365, value=90, step=15
+)
+comercial_seleccionado = st.sidebar.selectbox(
+    "Seleccionar Comercial:",
+    ('Camila', 'Andrea')
+)
+
+if st.sidebar.button("✨ Generar Prospectos"):
+    # 1. Identificar médicos inactivos
+    medicos_activos_recientemente = df_original[df_original['Fecha_Compra'] >= (datetime.now() - timedelta(days=dias_sin_compra))]['ID_Medico'].unique()
+    prospectos_df = df_features[~df_features['ID_Medico'].isin(medicos_activos_recientemente)]
+
+    if prospectos_df.empty:
+        st.warning(f"No se encontraron médicos que no hayan comprado en los últimos {dias_sin_compra} días.")
+    else:
+        # 2. Predecir probabilidad de compra
+        X_prospectos = prospectos_df[['Recencia', 'Frecuencia', 'Monetario']]
+        probabilidades = modelo.predict_proba(X_prospectos)[:, 1]
+        prospectos_df['Probabilidad_Compra'] = probabilidades
+
+        # 3. Asignar a comerciales (lógica simple para dividir prospectos)
+        prospectos_df = prospectos_df.sort_values(by='Probabilidad_Compra', ascending=False)
+        
+        # Lógica de asignación: pares para Camila, impares para Andrea
+        if comercial_seleccionado == 'Camila':
+            prospectos_finales = prospectos_df[prospectos_df['ID_Medico'] % 2 == 0].head(3)
+        else: # Andrea
+            prospectos_finales = prospectos_df[prospectos_df['ID_Medico'] % 2 != 0].head(3)
+        
+        # 4. Mostrar resultados
+        st.success(f"Top 3 Prospectos asignados a **{comercial_seleccionado}**:")
+        
+        if prospectos_finales.empty:
+            st.info(f"No hay suficientes prospectos para asignar a {comercial_seleccionado} con los criterios actuales.")
+        else:
+            # Unir con datos del médico para mostrar más información
+            prospectos_finales = pd.merge(prospectos_finales, df_original.drop_duplicates('ID_Medico'), on='ID_Medico')
+            
+            for index, row in prospectos_finales.iterrows():
+                st.markdown(f"""
+                <div style="border: 1px solid #ddd; border-radius: 5px; padding: 15px; margin-bottom: 10px;">
+                    <h4>👨‍⚕️ {row['Nombre_Medico']}</h4>
+                    <ul>
+                        <li><strong>Especialidad:</strong> {row['Especialidad']}</li>
+                        <li><strong>Ciudad:</strong> {row['Ciudad']}</li>
+                        <li><strong>Última Compra Hace:</strong> {row['Recencia_x']} días</li>
+                        <li><strong>Probabilidad de Compra:</strong> <span style="color: green; font-weight: bold;">{row['Probabilidad_Compra']:.2%}</span></li>
+                    </ul>
+                </div>
+                """, unsafe_allow_html=True)
+else:
+    st.info("Ajusta los filtros en la barra lateral y haz clic en 'Generar Prospectos' para ver las recomendaciones.")
+
