@@ -173,7 +173,7 @@ if st.sidebar.button("✨ Generar Prospectos"):
                     <ul>
                         <li><strong>Especialidad:</strong> {row['Especialidad']}</li>
                         <li><strong>Ciudad:</strong> {row['Ciudad']}</li>
-                        <li><strong>Última Compra Hace:</strong> {row['Recencia_x']} días</li>
+                        <li><strong>Última Compra Hace:</strong> {row['Recencia']} días</li>
                         <li><strong>Probabilidad de Compra:</strong> <span style="color: green; font-weight: bold;">{row['Probabilidad_Compra']:.2%}</span></li>
                     </ul>
                 </div>
