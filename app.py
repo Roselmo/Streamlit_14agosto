@@ -66,7 +66,6 @@ def crear_features(df):
     return features_df
 
 # --- ENTRENAMIENTO DEL MODELO PREDICTIVO ---
-@st.cache_resource
 def entrenar_modelo(features_df):
     """Entrena un modelo de clasificación para predecir la probabilidad de compra."""
     X = features_df[['Recencia', 'Frecuencia', 'Monetario']]
@@ -81,19 +80,17 @@ def entrenar_modelo(features_df):
     
     return model
 
-# Cargar y procesar datos
+# Cargar datos (solo se hace una vez gracias al caché)
 df_original = generar_datos()
-df_features = crear_features(df_original)
-modelo = entrenar_modelo(df_features)
 
 # --- BARRA LATERAL DE FILTROS ---
 st.sidebar.header("Filtros del Dashboard")
-especialidad_seleccionada = st.sidebar.multiselect(
+especialidad_seleccionada = st.sidebar.multoselect(
     "Filtrar por Especialidad:",
     options=df_original['Especialidad'].unique(),
     default=df_original['Especialidad'].unique()
 )
-ciudad_seleccionada = st.sidebar.multiselect(
+ciudad_seleccionada = st.sidebar.multoselect(
     "Filtrar por Ciudad:",
     options=df_original['Ciudad'].unique(),
     default=df_original['Ciudad'].unique()
@@ -136,48 +133,52 @@ comercial_seleccionado = st.sidebar.selectbox(
 )
 
 if st.sidebar.button("✨ Generar Prospectos"):
-    # 1. Identificar médicos inactivos
-    medicos_activos_recientemente = df_original[df_original['Fecha_Compra'] >= (datetime.now() - timedelta(days=dias_sin_compra))]['ID_Medico'].unique()
-    prospectos_df = df_features[~df_features['ID_Medico'].isin(medicos_activos_recientemente)]
+    with st.spinner('Reentrenando modelo y generando prospectos...'):
+        # 1. Recrear features y reentrenar el modelo CADA VEZ que se presiona el botón
+        df_features = crear_features(df_original)
+        modelo = entrenar_modelo(df_features)
 
-    if prospectos_df.empty:
-        st.warning(f"No se encontraron médicos que no hayan comprado en los últimos {dias_sin_compra} días.")
-    else:
-        # 2. Predecir probabilidad de compra
-        X_prospectos = prospectos_df[['Recencia', 'Frecuencia', 'Monetario']]
-        probabilidades = modelo.predict_proba(X_prospectos)[:, 1]
-        prospectos_df['Probabilidad_Compra'] = probabilidades
+        # 2. Identificar médicos inactivos
+        medicos_activos_recientemente = df_original[df_original['Fecha_Compra'] >= (datetime.now() - timedelta(days=dias_sin_compra))]['ID_Medico'].unique()
+        prospectos_df = df_features[~df_features['ID_Medico'].isin(medicos_activos_recientemente)]
 
-        # 3. Asignar a comerciales (lógica simple para dividir prospectos)
-        prospectos_df = prospectos_df.sort_values(by='Probabilidad_Compra', ascending=False)
-        
-        # Lógica de asignación: pares para Camila, impares para Andrea
-        if comercial_seleccionado == 'Camila':
-            prospectos_finales = prospectos_df[prospectos_df['ID_Medico'] % 2 == 0].head(3)
-        else: # Andrea
-            prospectos_finales = prospectos_df[prospectos_df['ID_Medico'] % 2 != 0].head(3)
-        
-        # 4. Mostrar resultados
-        st.success(f"Top 3 Prospectos asignados a **{comercial_seleccionado}**:")
-        
-        if prospectos_finales.empty:
-            st.info(f"No hay suficientes prospectos para asignar a {comercial_seleccionado} con los criterios actuales.")
+        if prospectos_df.empty:
+            st.warning(f"No se encontraron médicos que no hayan comprado en los últimos {dias_sin_compra} días.")
         else:
-            # Unir con datos del médico para mostrar más información
-            prospectos_finales = pd.merge(prospectos_finales, df_original.drop_duplicates('ID_Medico'), on='ID_Medico')
+            # 3. Predecir probabilidad de compra con el nuevo modelo
+            X_prospectos = prospectos_df[['Recencia', 'Frecuencia', 'Monetario']]
+            probabilidades = modelo.predict_proba(X_prospectos)[:, 1]
+            prospectos_df['Probabilidad_Compra'] = probabilidades
+
+            # 4. Asignar a comerciales
+            prospectos_df = prospectos_df.sort_values(by='Probabilidad_Compra', ascending=False)
             
-            for index, row in prospectos_finales.iterrows():
-                st.markdown(f"""
-                <div style="border: 1px solid #ddd; border-radius: 5px; padding: 15px; margin-bottom: 10px;">
-                    <h4>👨‍⚕️ {row['Nombre_Medico']}</h4>
-                    <ul>
-                        <li><strong>Especialidad:</strong> {row['Especialidad']}</li>
-                        <li><strong>Ciudad:</strong> {row['Ciudad']}</li>
-                        <li><strong>Última Compra Hace:</strong> {row['Recencia']} días</li>
-                        <li><strong>Probabilidad de Compra:</strong> <span style="color: green; font-weight: bold;">{row['Probabilidad_Compra']:.2%}</span></li>
-                    </ul>
-                </div>
-                """, unsafe_allow_html=True)
+            if comercial_seleccionado == 'Camila':
+                prospectos_finales = prospectos_df[prospectos_df['ID_Medico'] % 2 == 0].head(3)
+            else: # Andrea
+                prospectos_finales = prospectos_df[prospectos_df['ID_Medico'] % 2 != 0].head(3)
+            
+            # 5. Mostrar resultados
+            st.success(f"Top 3 Prospectos asignados a **{comercial_seleccionado}**:")
+            
+            if prospectos_finales.empty:
+                st.info(f"No hay suficientes prospectos para asignar a {comercial_seleccionado} con los criterios actuales.")
+            else:
+                prospectos_finales = pd.merge(prospectos_finales, df_original.drop_duplicates('ID_Medico'), on='ID_Medico')
+                
+                for index, row in prospectos_finales.iterrows():
+                    st.markdown(f"""
+                    <div style="border: 1px solid #ddd; border-radius: 5px; padding: 15px; margin-bottom: 10px;">
+                        <h4>👨‍⚕️ {row['Nombre_Medico']}</h4>
+                        <ul>
+                            <li><strong>Especialidad:</strong> {row['Especialidad']}</li>
+                            <li><strong>Ciudad:</strong> {row['Ciudad']}</li>
+                            <li><strong>Última Compra Hace:</strong> {row['Recencia']} días</li>
+                            <li><strong>Probabilidad de Compra:</strong> <span style="color: green; font-weight: bold;">{row['Probabilidad_Compra']:.2%}</span></li>
+                        </ul>
+                    </div>
+                    """, unsafe_allow_html=True)
 else:
     st.info("Ajusta los filtros en la barra lateral y haz clic en 'Generar Prospectos' para ver las recomendaciones.")
+
 
