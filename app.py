@@ -1,188 +1,67 @@
 import streamlit as st
-import pandas as pd
-import numpy as np
-import plotly.express as px
-from datetime import datetime, timedelta
-from sklearn.model_selection import train_test_split
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.metrics import accuracy_score
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.output_parsers import StrOutputParser
+from langchain_groq import ChatGroq
 
 # --- CONFIGURACIÓN DE LA PÁGINA ---
 st.set_page_config(
-    page_title="Dashboard Comercial de Salud",
-    page_icon="📈",
-    layout="wide"
+    page_title="Agente con Llama3 y Groq",
+    page_icon="🤖",
+    layout="centered"
 )
 
-# --- TÍTULO PRINCIPAL ---
-st.title("📈 Dashboard Comercial para Equipo de Ventas")
-st.markdown("Análisis de comportamiento de compras y generación de prospectos para médicos.")
+# --- TÍTULO Y DESCRIPCIÓN ---
+st.title("🤖 Agente Inteligente con Llama3")
+st.markdown("Este agente utiliza el poder de Llama3 a través de la API de Groq para responder a tus preguntas. Escribe tu consulta a continuación.")
 
-# --- GENERACIÓN DE DATOS SIMULADOS ---
-# Se elimina @st.cache_data para usar st.session_state para un control explícito
-def generar_datos(n_medicos=200, n_compras=2000):
-    """Genera un DataFrame simulado de médicos y sus compras."""
-    # Sin semilla aleatoria para asegurar que los datos sean diferentes cada vez.
-    
-    # Datos de Médicos
-    especialidades = ['Cardiología', 'Dermatología', 'Pediatría', 'Oncología', 'General']
-    ciudades = ['Bogotá', 'Medellín', 'Cali', 'Barranquilla']
-    medicos_df = pd.DataFrame({
-        'ID_Medico': range(1, n_medicos + 1),
-        'Nombre_Medico': [f'Dr. Apellido{i}' for i in range(1, n_medicos + 1)],
-        'Especialidad': np.random.choice(especialidades, n_medicos),
-        'Ciudad': np.random.choice(ciudades, n_medicos)
-    })
+# --- VALIDACIÓN DE LA API KEY ---
+try:
+    # Intenta acceder a la clave de API desde los secretos de Streamlit
+    groq_api_key = st.secrets["GROQ_API_KEY"]
+except KeyError:
+    st.error("🚨 No se encontró la GROQ_API_KEY en los secretos de Streamlit.")
+    st.info("Por favor, asegúrate de haber creado un archivo .streamlit/secrets.toml con tu clave. Mira las instrucciones en el archivo README.")
+    st.stop() # Detiene la ejecución si la clave no se encuentra
 
-    # Datos de Compras
-    productos = ['Producto A', 'Producto B', 'Producto C', 'Producto D', 'Producto E']
-    fechas_compra = [datetime.now() - timedelta(days=np.random.randint(1, 730)) for _ in range(n_compras)]
-    compras_df = pd.DataFrame({
-        'ID_Medico': np.random.randint(1, n_medicos + 1, n_compras),
-        'Fecha_Compra': fechas_compra,
-        'Producto': np.random.choice(productos, n_compras),
-        'Monto_Compra': np.random.uniform(100, 1500, n_compras).round(2)
-    })
-
-    # Unir los dataframes
-    df_completo = pd.merge(compras_df, medicos_df, on='ID_Medico')
-    return df_completo.sort_values(by='Fecha_Compra', ascending=False)
-
-# --- FEATURE ENGINEERING PARA EL MODELO ---
-def crear_features(df):
-    """Crea características de Recencia, Frecuencia y Monetario (RFM)."""
-    hoy = datetime.now()
-    features_df = df.groupby('ID_Medico').agg(
-        Recencia=('Fecha_Compra', lambda date: (hoy - date.max()).days),
-        Frecuencia=('ID_Medico', 'count'),
-        Monetario=('Monto_Compra', 'sum')
-    ).reset_index()
-    
-    df_ultima_compra = df.groupby('ID_Medico')['Fecha_Compra'].max().reset_index()
-    df_ultima_compra['Target'] = (hoy - df_ultima_compra['Fecha_Compra']).dt.days < 90
-    
-    features_df = pd.merge(features_df, df_ultima_compra[['ID_Medico', 'Target']], on='ID_Medico')
-    return features_df
-
-# --- ENTRENAMIENTO DEL MODELO PREDICTIVO ---
-def entrenar_modelo(features_df):
-    """Entrena un modelo de clasificación para predecir la probabilidad de compra."""
-    X = features_df[['Recencia', 'Frecuencia', 'Monetario']]
-    y = features_df['Target']
-    
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.25, random_state=42)
-    
-    model = RandomForestClassifier(n_estimators=100, random_state=42, class_weight='balanced')
-    model.fit(X_train, y_train)
-    
-    return model
-
-# --- BARRA LATERAL Y MANEJO DE ESTADO ---
-st.sidebar.header("Controles del Dashboard")
-
-# Botón para refrescar los datos de origen, usando session_state
-if st.sidebar.button("🔄 Simular Nuevos Datos de Origen"):
-    st.session_state.df_original = generar_datos()
-    st.sidebar.success("Nuevos datos generados. ¡Vuelve a generar prospectos!")
-
-# Inicializar el dataframe en el estado de la sesión si no existe
-if 'df_original' not in st.session_state:
-    st.session_state.df_original = generar_datos()
-
-df_original = st.session_state.df_original
-
-# Filtros del dashboard
-st.sidebar.header("Filtros de Visualización")
-especialidad_options = df_original['Especialidad'].unique().tolist()
-ciudad_options = df_original['Ciudad'].unique().tolist()
-
-especialidad_seleccionada = st.sidebar.multiselect(
-    "Filtrar por Especialidad:",
-    options=especialidad_options,
-    default=especialidad_options
+# --- INICIALIZACIÓN DEL MODELO Y LA CADENA ---
+# Inicializa el modelo de lenguaje de Groq
+# El modelo llama3-8b-8192 es rápido y eficiente
+chat = ChatGroq(
+    temperature=0.7,
+    groq_api_key=groq_api_key,
+    model_name="llama3-8b-8192"
 )
-ciudad_seleccionada = st.sidebar.multiselect(
-    "Filtrar por Ciudad:",
-    options=ciudad_options,
-    default=ciudad_options
-)
-df_filtrado = df_original[
-    (df_original['Especialidad'].isin(especialidad_seleccionada)) &
-    (df_original['Ciudad'].isin(ciudad_seleccionada))
-]
 
-# --- DASHBOARD DE ANÁLISIS COMERCIAL ---
-st.subheader("Análisis de Comportamiento de Compras")
-col1, col2 = st.columns(2)
+# Define la plantilla del prompt para guiar al modelo
+system_prompt = "Eres un asistente útil y conciso. Responde a las preguntas del usuario de la mejor manera posible."
+human_prompt = "{text}"
+prompt = ChatPromptTemplate.from_messages([
+    ("system", system_prompt),
+    ("human", human_prompt)
+])
 
-with col1:
-    ventas_por_mes = df_filtrado.set_index('Fecha_Compra').groupby(pd.Grouper(freq='ME'))['Monto_Compra'].sum().reset_index()
-    fig_line = px.line(ventas_por_mes, x='Fecha_Compra', y='Monto_Compra', title='Evolución de Ventas Mensuales', markers=True)
-    st.plotly_chart(fig_line, use_container_width=True)
+# Define el parser para obtener la respuesta como texto
+output_parser = StrOutputParser()
 
-with col2:
-    top_productos = df_filtrado.groupby('Producto')['Monto_Compra'].sum().nlargest(5).reset_index()
-    fig_bar = px.bar(top_productos, x='Producto', y='Monto_Compra', title='Top 5 Productos por Monto de Venta', color='Producto')
-    st.plotly_chart(fig_bar, use_container_width=True)
+# Crea la cadena (chain) que une los componentes
+chain = prompt | chat | output_parser
+
+# --- INTERFAZ DE USUARIO ---
+user_input = st.text_input("Escribe tu pregunta aquí:", key="user_input")
+
+if user_input:
+    with st.spinner("Pensando..."):
+        try:
+            # Invoca la cadena con la entrada del usuario
+            response = chain.invoke({"text": user_input})
+            st.write("### Respuesta del Agente:")
+            st.markdown(response)
+        except Exception as e:
+            st.error(f"Ocurrió un error al contactar la API de Groq: {e}")
 
 st.markdown("---")
+st.write("Desarrollado con ❤️ usando Streamlit, LangChain y Groq.")
 
-# --- SECCIÓN DE PREDICCIÓN Y GENERACIÓN DE PROSPECTOS ---
-st.subheader("🤖 Generador de Prospectos con IA")
-
-st.sidebar.header("Generador de Prospectos")
-dias_sin_compra = st.sidebar.slider(
-    "Médicos que no han comprado en los últimos (días):",
-    min_value=30, max_value=365, value=90, step=15
-)
-comercial_seleccionado = st.sidebar.selectbox(
-    "Seleccionar Comercial:",
-    ('Camila', 'Andrea')
-)
-
-if st.sidebar.button("✨ Generar Prospectos"):
-    with st.spinner('Reentrenando modelo y generando prospectos...'):
-        df_features = crear_features(df_original)
-        modelo = entrenar_modelo(df_features)
-
-        medicos_activos_recientemente = df_original[df_original['Fecha_Compra'] >= (datetime.now() - timedelta(days=dias_sin_compra))]['ID_Medico'].unique()
-        prospectos_df = df_features[~df_features['ID_Medico'].isin(medicos_activos_recientemente)]
-
-        if prospectos_df.empty:
-            st.warning(f"No se encontraron médicos que no hayan comprado en los últimos {dias_sin_compra} días.")
-        else:
-            X_prospectos = prospectos_df[['Recencia', 'Frecuencia', 'Monetario']]
-            probabilidades = modelo.predict_proba(X_prospectos)[:, 1]
-            prospectos_df['Probabilidad_Compra'] = probabilidades
-
-            prospectos_df = prospectos_df.sort_values(by='Probabilidad_Compra', ascending=False)
-            
-            if comercial_seleccionado == 'Camila':
-                prospectos_finales = prospectos_df[prospectos_df['ID_Medico'] % 2 == 0].head(3)
-            else:
-                prospectos_finales = prospectos_df[prospectos_df['ID_Medico'] % 2 != 0].head(3)
-            
-            st.success(f"Top 3 Prospectos asignados a **{comercial_seleccionado}**:")
-            
-            if prospectos_finales.empty:
-                st.info(f"No hay suficientes prospectos para asignar a {comercial_seleccionado} con los criterios actuales.")
-            else:
-                prospectos_finales = pd.merge(prospectos_finales, df_original.drop_duplicates('ID_Medico'), on='ID_Medico')
-                
-                for index, row in prospectos_finales.iterrows():
-                    st.markdown(f"""
-                    <div style="border: 1px solid #ddd; border-radius: 5px; padding: 15px; margin-bottom: 10px;">
-                        <h4>👨‍⚕️ {row['Nombre_Medico']}</h4>
-                        <ul>
-                            <li><strong>Especialidad:</strong> {row['Especialidad']}</li>
-                            <li><strong>Ciudad:</strong> {row['Ciudad']}</li>
-                            <li><strong>Última Compra Hace:</strong> {row['Recencia']} días</li>
-                            <li><strong>Probabilidad de Compra:</strong> <span style="color: green; font-weight: bold;">{row['Probabilidad_Compra']:.2%}</span></li>
-                        </ul>
-                    </div>
-                    """, unsafe_allow_html=True)
-else:
-    st.info("Ajusta los filtros en la barra lateral y haz clic en 'Generar Prospectos' para ver las recomendaciones.")
 
 
 
